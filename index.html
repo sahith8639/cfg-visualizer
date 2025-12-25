@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CFG Visualizer</title>
+
+<style>
+body {
+    margin: 0;
+    font-family: Segoe UI, sans-serif;
+    background: #e5e7eb;
+}
+h1 {
+    padding: 30px;
+    margin: 0;
+    font-size: 40px;
+    color: #374151;
+}
+.app {
+    width: 100vw;
+    min-height: 100vh;
+    background: #020617;
+    padding: 30px;
+    box-sizing: border-box;
+    color: white;
+}
+.grid {
+    display: grid;
+    grid-template-columns: 1fr 1.4fr;
+    gap: 20px;
+}
+.panel {
+    background: #0f172a;
+    padding: 20px;
+    border-radius: 12px;
+}
+textarea, input {
+    width: 100%;
+    background: #020617;
+    color: #e5e7eb;
+    border: 1px solid #334155;
+    padding: 12px;
+    border-radius: 8px;
+}
+textarea { height: 220px; }
+button {
+    background: #60a5fa;
+    color: #020617;
+    border: none;
+    padding: 12px;
+    border-radius: 8px;
+    margin-top: 12px;
+    cursor: pointer;
+}
+.tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+.tab {
+    padding: 8px 14px;
+    background: #020617;
+    border-radius: 8px;
+    cursor: pointer;
+    opacity: 0.6;
+}
+.tab.active {
+    opacity: 1;
+    background: #111827;
+}
+table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #020617;
+}
+th, td {
+    padding: 10px;
+    border-bottom: 1px solid #334155;
+    text-align: center;
+}
+th { color: #93c5fd; }
+
+pre {
+    background: #020617;
+    padding: 20px;
+    border-radius: 12px;
+    white-space: pre;
+    min-height: 520px;
+    overflow: auto;
+    font-size: 16px;
+    line-height: 1.4;
+}
+
+.hidden { display: none; }
+</style>
+</head>
+
+<body>
+
+<h1>Context-Free Generator</h1>
+
+<div class="app">
+<div class="grid">
+
+<div class="panel">
+<h3>Grammar Workspace</h3>
+<p><b>Expression Grammar (LL(1))</b></p>
+
+<textarea id="grammar">
+E  -> T E'
+E' -> + T E' | e
+T  -> F T'
+T' -> * F T' | e
+F  -> id | ( E )
+</textarea>
+
+<input id="inputStr" value="id+id*id">
+<button onclick="run()">Run Analyzer</button>
+</div>
+
+<div class="panel">
+
+<div class="tabs">
+    <div class="tab active" onclick="showTab(0)">FIRST / FOLLOW</div>
+    <div class="tab" onclick="showTab(1)">LL(1) Table</div>
+    <div class="tab" onclick="showTab(2)">Parse Tree</div>
+</div>
+
+<div id="tab0">
+<h3>FIRST Sets</h3>
+<table id="firstTable"></table>
+<h3>FOLLOW Sets</h3>
+<table id="followTable"></table>
+</div>
+
+<div id="tab1" class="hidden">
+<h3>LL(1) Parsing Table</h3>
+<table id="ll1Table"></table>
+</div>
+
+<div id="tab2" class="hidden">
+<h3>Parse Tree</h3>
+<pre id="parseTree"></pre>
+</div>
+
+</div>
+</div>
+</div>
+
+<script>
+/* ================= CORE (UNCHANGED) ================= */
+
+let grammar={}, FIRST={}, FOLLOW={}, start;
+
+function run(){
+    parseGrammar();
+    computeFIRST();
+    computeFOLLOW();
+    renderFirstFollow();
+    renderLL1Table();
+    generateParseTree();
+}
+
+function parseGrammar(){
+    grammar={}; FIRST={}; FOLLOW={};
+    let lines=document.getElementById("grammar").value.trim().split("\n");
+    start=lines[0].split("->")[0].trim();
+    lines.forEach(l=>{
+        let [lhs,rhs]=l.split("->");
+        lhs=lhs.trim();
+        grammar[lhs]=rhs.split("|").map(p=>p.trim().split(" "));
+        FIRST[lhs]=new Set();
+        FOLLOW[lhs]=new Set();
+    });
+    FOLLOW[start].add("$");
+}
+
+/* FIRST / FOLLOW / LL(1) — unchanged */
+
+function computeFIRST(){
+    let changed=true;
+    while(changed){
+        changed=false;
+        for(let A in grammar){
+            grammar[A].forEach(p=>{
+                let nullable=true;
+                for(let s of p){
+                    if(!grammar[s]){
+                        if(!FIRST[A].has(s)){ FIRST[A].add(s); changed=true; }
+                        nullable=false; break;
+                    }
+                    FIRST[s].forEach(x=>x!=="e"&&!FIRST[A].has(x)&&(FIRST[A].add(x),changed=true));
+                    if(!FIRST[s].has("e")){ nullable=false; break; }
+                }
+                if(nullable&&!FIRST[A].has("e")){ FIRST[A].add("e"); changed=true; }
+            });
+        }
+    }
+}
+
+function computeFOLLOW(){
+    let changed=true;
+    while(changed){
+        changed=false;
+        for(let A in grammar){
+            grammar[A].forEach(p=>{
+                for(let i=0;i<p.length;i++){
+                    let B=p[i];
+                    if(!grammar[B]) continue;
+                    let beta=p.slice(i+1);
+                    let nullable=true;
+                    for(let s of beta){
+                        if(!grammar[s]){
+                            !FOLLOW[B].has(s)&&(FOLLOW[B].add(s),changed=true);
+                            nullable=false; break;
+                        }
+                        FIRST[s].forEach(x=>x!=="e"&&!FOLLOW[B].has(x)&&(FOLLOW[B].add(x),changed=true));
+                        if(!FIRST[s].has("e")){ nullable=false; break; }
+                    }
+                    if(nullable) FOLLOW[A].forEach(x=>!FOLLOW[B].has(x)&&(FOLLOW[B].add(x),changed=true));
+                }
+            });
+        }
+    }
+}
+
+function renderFirstFollow(){
+    firstTable.innerHTML="<tr><th>NT</th><th>FIRST</th></tr>";
+    followTable.innerHTML="<tr><th>NT</th><th>FOLLOW</th></tr>";
+    for(let nt in grammar){
+        firstTable.innerHTML+=`<tr><td>${nt}</td><td>{ ${[...FIRST[nt]].join(", ")} }</td></tr>`;
+        followTable.innerHTML+=`<tr><td>${nt}</td><td>{ ${[...FOLLOW[nt]].join(", ")} }</td></tr>`;
+    }
+}
+
+function renderLL1Table(){
+    let terms=new Set();
+    for(let A in grammar)
+        grammar[A].flat().forEach(s=>!grammar[s]&&s!=="e"&&terms.add(s));
+    terms.add("$");
+
+    let table={}; for(let A in grammar) table[A]={};
+
+    for(let A in grammar){
+        grammar[A].forEach(p=>{
+            let first=new Set(); let nullable=true;
+            for(let s of p){
+                if(!grammar[s]){ first.add(s); nullable=false; break; }
+                FIRST[s].forEach(x=>x!=="e"&&first.add(x));
+                if(!FIRST[s].has("e")){ nullable=false; break; }
+            }
+            first.forEach(t=>table[A][t]=`${A}→${p.join(" ")}`);
+            if(nullable) FOLLOW[A].forEach(t=>table[A][t]=`${A}→e`);
+        });
+    }
+
+    let html="<tr><th></th>";
+    terms.forEach(t=>html+=`<th>${t}</th>`);
+    html+="</tr>";
+    for(let A in table){
+        html+=`<tr><th>${A}</th>`;
+        terms.forEach(t=>html+=`<td>${table[A][t]||""}</td>`);
+        html+="</tr>";
+    }
+    ll1Table.innerHTML=html;
+}
+
+/* ================= PARSE TREE ================= */
+
+class Node{ constructor(v){ this.v=v; this.c=[]; } }
+
+function tokenize(s){ return s.match(/id|\+|\*|\(|\)/g)||[]; }
+let tokens=[], pos=0;
+
+function parseE(){ let n=new Node("E"); n.c.push(parseT()); n.c.push(parseEPrime()); return n; }
+function parseEPrime(){
+    let n=new Node("E'");
+    if(tokens[pos]==="+"){ n.c.push(new Node("+")); pos++; n.c.push(parseT()); n.c.push(parseEPrime()); }
+    else n.c.push(new Node("e"));
+    return n;
+}
+function parseT(){ let n=new Node("T"); n.c.push(parseF()); n.c.push(parseTPrime()); return n; }
+function parseTPrime(){
+    let n=new Node("T'");
+    if(tokens[pos]==="*"){ n.c.push(new Node("*")); pos++; n.c.push(parseF()); n.c.push(parseTPrime()); }
+    else n.c.push(new Node("e"));
+    return n;
+}
+function parseF(){
+    let n=new Node("F");
+    if(tokens[pos]==="id"){ n.c.push(new Node("id")); pos++; }
+    else if(tokens[pos]==="("){ pos++; n.c.push(parseE()); pos++; }
+    return n;
+}
+
+/* ===== TREE STRUCTURE DRAWING (CENTERED TREE) ===== */
+
+function buildTree(node){
+    if(!node) return [];
+
+    let children = node.c.filter(c=>c.v!=="e").map(buildTree);
+
+    if(children.length===0){
+        return [node.v];
+    }
+
+    let widths = children.map(c=>Math.max(...c.map(l=>l.length)));
+    let total = widths.reduce((a,b)=>a+b,0) + (children.length-1)*4;
+
+    let root = node.v.padStart(Math.floor((total + node.v.length)/2)).padEnd(total);
+
+    let connector="";
+    let pos=0;
+    widths.forEach(w=>{
+        connector = connector.padEnd(pos + Math.floor(w/2)," ") + "|";
+        pos += w + 4;
+    });
+
+    let lines=[root,connector];
+
+    let height=Math.max(...children.map(c=>c.length));
+    for(let i=0;i<height;i++){
+        let line="";
+        children.forEach((c,j)=>{
+            line += (c[i]||"").padEnd(widths[j]+4);
+        });
+        lines.push(line.trimEnd());
+    }
+
+    return lines;
+}
+
+function generateParseTree(){
+    tokens=tokenize(inputStr.value);
+    pos=0;
+    let root=parseE();
+    let tree=buildTree(root);
+    parseTree.textContent=tree.join("\n");
+}
+
+/* ================= TABS ================= */
+
+function showTab(i){
+    document.querySelectorAll(".tab").forEach((t,j)=>{
+        t.classList.toggle("active",i===j);
+        document.getElementById("tab"+j).classList.toggle("hidden",i!==j);
+    });
+}
+</script>
+
+</body>
+</html>
